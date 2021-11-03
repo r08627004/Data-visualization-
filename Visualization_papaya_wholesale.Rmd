@@ -1,0 +1,171 @@
+---
+title: "Visualization_papaya_wholesale"
+author: "Tsai Fan-Chih"
+date: "11/3/2021"
+output: html_document
+---
+# Install packages
+```{r}
+# Install package if not exists
+system("defaults write org.R-project.R force.LANG zh_TW.UTF-8")
+packages <- c(
+  'tidyverse','sf','jsonlite','psych','clipr','readxl','methods','dplyr','lubridate',
+  'geojson','geojsonio','geojsonsf','maps','ggrepel','broom','cartogram','rjson','XML',
+  'ggplot2','showtext','scales'
+)
+
+installed_packages <- packages %in% rownames(installed.packages())
+if (any(installed_packages == FALSE)) {
+  install.packages(packages[!installed_packages])
+}
+# 載入套件
+library(tidyverse)
+lapply(packages, library, character.only = TRUE) %>%
+  invisible()
+```
+
+# Data Preprocessing
+```{r}
+#### 合併木瓜批發價格 ####
+path <- "/Users/tsaifannchih/Desktop/碩論/批發市場交易行情/"
+files <- list.files(path = path, pattern = ".xls$")
+df1 <- data.frame()
+df2 <- data.frame()
+for(file in files) {
+  df1 <- read_excel(paste(path, file, sep=""), skip = 4)
+  names(df1) <- c('Date','Market','Product','Upper_Price','Middle_Price','Lower_Price','Average_Price','Diff_Price','Volume','Diff_Volume','NA')
+  df1 <- df1 %>% select(c('Date','Market','Product','Upper_Price','Middle_Price','Lower_Price','Average_Price','Diff_Price','Volume','Diff_Volume'))
+  df1$Date <-as.Date(paste(as.numeric(substr(df1$Date, 1, 3)) + 1911, substr(df1$Date, 4, 9), sep = ""))
+  df2 <- rbind(df2, df1)
+}
+
+df2 <- df2 %>% mutate(Month = month(df2$Date, label = TRUE))
+table(df2$Market)
+```
+
+# Descriptive statistics
+```{r}
+# 選定台北一、台北二、板橋區、三重區4個市場
+## 看各市場敘述統計
+df2_summary <- df2 %>% filter(Market == c("104 台北二", "109 台北一", "220 板橋區", "241 三重區")) %>%
+  select(c('Market','Month','Product','Upper_Price','Middle_Price','Lower_Price','Average_Price','Volume')) %>%
+  group_by(Market, Product, Month) %>%
+  summarise(count = n(),
+            Upper_mean = mean(Upper_Price, na.rm = TRUE),
+            Middel_mean = mean(Middle_Price, na.rm = TRUE),
+            Lower_mean = mean(Lower_Price, na.rm = TRUE),
+            All_mean = mean(Average_Price, na.rm = TRUE),
+            All_median = median(Average_Price, na.rm = TRUE),
+            Q1 = quantile(Average_Price, 1/4),
+            Q3 = quantile(Average_Price, 3/4),
+            Range = max(Average_Price) - min(Average_Price),
+            Volume_mean = mean(Volume),
+            Volume_sd = sd(Volume))
+## Save it
+# setwd("/Users/tsaifannchih/Desktop/碩論")
+# write.csv(df2_summary,file="1996-2020年雙北市場各品種木瓜敘述統計.csv")
+table(df2$Product)
+```
+
+# Visualization
+## 4個市場中不同品種木瓜的平均價格走勢
+```{r}
+##台北市
+df2_tp <- filter(df2, Market == "109 台北一", Product == "I1 木瓜 網室紅肉")
+# library(ggplot2)
+# library(showtext)
+showtext.auto(enable = TRUE)
+font.add("標楷體", "Kaiu.ttf")
+
+par(family="標楷體")
+Trend_plot <- ggplot(data = df2_tp, mapping = aes(x = Date, y = Average_Price)) +
+  geom_point() +
+  geom_line()
+
+# library(scales)
+datebreaks <- seq(as.Date("1996-01-01"), as.Date("2020-12-31"),
+                  by = "15 days")
+Trend_plot +
+  scale_x_date(breaks = datebreaks) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+## 4個市場中各品種木瓜平均價格的箱型圖、機率密度圖
+```{r}
+df2_tp2 <- filter(df2, Market == c("104 台北二", "109 台北一", "220 板橋區", "241 三重區"))
+
+## Box Plot
+qplot(x=Market,                               
+      y=Average_Price,
+      data=df2_tp2,                     
+      geom="boxplot",       # 圖形=boxplot
+      xlab="Market",                          
+      color= Product          # 以顏色標註市場，複合式的合鬚圖
+)
+```
+
+## 4個市場中紅肉木瓜平均價格的箱型圖、機率密度圖
+```{r}
+df2_target <- filter(df2, Product == "I1 木瓜 網室紅肉", 
+                        Market == c("104 台北二", "109 台北一", "220 板橋區", "241 三重區"))
+
+## Box Plot
+qplot(x=Market,                               
+      y=Average_Price,
+      data=df2_target,                     
+      geom="boxplot",       # 圖形=boxplot
+      xlab="Market",                          
+      color= Market          # 以顏色標註市場，複合式的合鬚圖
+)
+
+#台北一網室紅肉木瓜各月Box plot
+qplot(x = Month,                               
+      y = Average_Price,
+      data = df2_target %>% filter(Market == "241 三重區"),                     
+      geom = "boxplot",       # 圖形=boxplot
+      xlab = "Month",
+      main = "三重區網室紅肉Box Plot"
+)
+
+## Density Plot
+qplot(x=Average_Price,                             
+      data=df2_target,                     
+      geom="density",        # 圖形=density
+      xlab="Average_Price",                         
+      color= Market           # 以顏色標註市場，複合式的機率密度圖
+)
+
+## 以月來分析80%、85%、90%、95%價格區間
+df_target <- df2 %>% filter(Market == c("104 台北二", "109 台北一", "241 三重區"),
+                               Product == "I1 木瓜 網室紅肉")
+df2_interval <- df2 %>% filter(Market == c("104 台北二", "109 台北一", "241 三重區"),
+                               Product == "I1 木瓜 網室紅肉") %>%
+  #group_by(Month) %>%
+  summarise(count = n(),
+            Q1 = quantile(Average_Price, 1/4),
+            Q3 = quantile(Average_Price, 3/4),
+            Range = max(Average_Price) - min(Average_Price),
+            B_95 = quantile(Average_Price, 0.025),
+            B_90 = quantile(Average_Price, 0.05),
+            B_85 = quantile(Average_Price, 0.075),
+            B_80 = quantile(Average_Price, 0.1),
+            Median = median(Average_Price, na.rm = TRUE),
+            U_80 = quantile(Average_Price, 0.9),
+            U_85 = quantile(Average_Price, 0.925),
+            U_90 = quantile(Average_Price, 0.95),
+            U_95 = quantile(Average_Price, 0.975),
+            Price_mean = mean(Average_Price, na.rm = TRUE),
+            Price_sd = sd(Average_Price, na.rm = TRUE),
+            Volume_mean = mean(Volume, na.rm = TRUE),
+            Volume_sd = sd(Volume,na.rm = TRUE))
+
+dd <- df2 %>% filter(Market == c("104 台北二", "109 台北一", "241 三重區"),
+                               Product == "I1 木瓜 網室紅肉") %>%
+  summarise(count = n(),
+            B_95 = quantile(Middle_Price, 0.025),
+            Median = median(Middle_Price, na.rm = TRUE),
+            U_95 = quantile(Middle_Price, 0.975),
+            Price_mean = mean(Middle_Price, na.rm = TRUE),
+            Price_sd = sd(Middle_Price, na.rm = TRUE))
+
+```
+
